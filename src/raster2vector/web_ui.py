@@ -429,8 +429,6 @@ def create_web_ui() -> "gr.Blocks":
                     gr.Image(
                         value=logo_path,
                         show_label=False,
-                        show_share_button=False,
-                        container=False,
                         height=150,
                     )
             with gr.Column(scale=3):

@@ -399,11 +399,13 @@ def convert_image(
 def get_logo_path() -> Optional[str]:
     """Get the path to the logo file if it exists."""
     import os
-    # Check for logo in assets folder
+    # Check for logo in assets folder (try multiple common names)
     module_dir = os.path.dirname(os.path.abspath(__file__))
-    logo_path = os.path.join(module_dir, "assets", "logo.png")
-    if os.path.exists(logo_path):
-        return logo_path
+    logo_names = ["software_logo.png", "logo.png", "logo.jpg", "logo.svg"]
+    for name in logo_names:
+        logo_path = os.path.join(module_dir, "assets", name)
+        if os.path.exists(logo_path):
+            return logo_path
     return None
 
 

@@ -240,7 +240,7 @@ def merge_nearby_endpoints(
     n = len(open_paths)
     parent = list(range(n))
 
-   def find(i):
+    def find(i):
         root = i
         while parent[root] != root:
             root = parent[root]

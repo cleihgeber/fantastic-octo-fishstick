@@ -1,8 +1,10 @@
 """Web-based GUI using Gradio for raster2vector."""
 
 import tempfile
+import time
+import threading
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Generator
 import numpy as np
 
 try:
@@ -91,14 +93,67 @@ def convert_image(
     hatch_spacing: float,
     cross_hatch: bool,
     seed: str,
-) -> Tuple[Optional[str], str]:
-    """Convert an image to SVG.
+) -> Generator[Tuple[Optional[str], str], None, None]:
+    """Convert an image to SVG with progress updates.
 
-    Returns:
-        Tuple of (SVG file path or None, status message)
+    Yields:
+        Tuples of (SVG file path or None, status message)
     """
     if image is None:
-        return None, "Please upload an image first."
+        yield None, "Please upload an image first."
+        return
+
+    # Progress tracking state
+    progress_state = {
+        "step_name": "Starting...",
+        "step_num": 0,
+        "total_steps": 10,
+        "percent": 0.0,
+        "start_time": time.time(),
+        "step_times": [],
+    }
+
+    def format_time(seconds: float) -> str:
+        """Format seconds into human readable string."""
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes}m {secs}s"
+
+    def build_progress_message() -> str:
+        """Build the progress status message."""
+        elapsed = time.time() - progress_state["start_time"]
+        percent = progress_state["percent"]
+        step_name = progress_state["step_name"]
+        step_num = progress_state["step_num"]
+        total = progress_state["total_steps"]
+
+        # Create progress bar
+        bar_width = 20
+        filled = int(bar_width * percent / 100)
+        bar = "█" * filled + "░" * (bar_width - filled)
+
+        msg = f"Converting...\n\n"
+        msg += f"[{bar}] {percent:.0f}%\n\n"
+        msg += f"Step {step_num}/{total}: {step_name}\n"
+        msg += f"Elapsed: {format_time(elapsed)}\n"
+
+        # Estimate remaining time based on progress
+        if percent > 0:
+            estimated_total = elapsed / (percent / 100)
+            remaining = estimated_total - elapsed
+            if remaining > 0:
+                msg += f"Estimated remaining: {format_time(remaining)}\n"
+
+        return msg
+
+    def progress_callback(step_name: str, step_num: int, total_steps: int, percent: float):
+        """Callback to receive progress updates from converter."""
+        progress_state["step_name"] = step_name
+        progress_state["step_num"] = step_num
+        progress_state["total_steps"] = total_steps
+        progress_state["percent"] = percent
 
     try:
         # Handle paper size
@@ -151,9 +206,39 @@ def convert_image(
             cross_hatch=cross_hatch,
         )
 
-        # Convert
-        converter = RasterToVectorConverter(config)
-        result = converter.convert(image, seed=seed_value)
+        # Yield initial progress
+        yield None, build_progress_message()
+
+        # Run conversion in a thread so we can yield progress updates
+        result_holder = {"result": None, "error": None}
+
+        def run_conversion():
+            try:
+                converter = RasterToVectorConverter(config)
+                result_holder["result"] = converter.convert(
+                    image,
+                    seed=seed_value,
+                    progress_callback=progress_callback,
+                )
+            except Exception as e:
+                result_holder["error"] = e
+
+        thread = threading.Thread(target=run_conversion)
+        thread.start()
+
+        # Yield progress updates while conversion runs
+        last_percent = -1
+        while thread.is_alive():
+            thread.join(timeout=0.2)  # Check every 200ms
+            if progress_state["percent"] != last_percent:
+                last_percent = progress_state["percent"]
+                yield None, build_progress_message()
+
+        # Check for errors
+        if result_holder["error"]:
+            raise result_holder["error"]
+
+        result = result_holder["result"]
 
         # Save to temp file
         temp_dir = tempfile.mkdtemp()
@@ -162,10 +247,12 @@ def convert_image(
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(result.svg.content)
 
-        # Build stats message
+        # Build final stats message
+        elapsed = time.time() - progress_state["start_time"]
         stats = result.stats
         msg = (
             f"Conversion successful!\n\n"
+            f"Completed in {format_time(elapsed)}\n\n"
             f"Source: {stats['source_width']}x{stats['source_height']} px\n"
             f"Paths: {stats['paths_output']}\n"
             f"Total length: {stats['total_path_length']:.0f} units\n"
@@ -175,10 +262,10 @@ def convert_image(
         if stats.get('fill_hatching'):
             msg += "Fill hatching: enabled\n"
 
-        return str(output_path), msg
+        yield str(output_path), msg
 
     except Exception as e:
-        return None, f"Error: {str(e)}"
+        yield None, f"Error: {str(e)}"
 
 
 def create_web_ui() -> "gr.Blocks":

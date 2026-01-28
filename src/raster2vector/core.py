@@ -1,11 +1,16 @@
 """Core conversion functionality."""
 
+import time
 import numpy as np
 from pathlib import Path
-from typing import Union, Optional, List
+from typing import Union, Optional, List, Callable
 from dataclasses import dataclass
 
 from .config import ConversionConfig
+
+
+# Progress callback type: (step_name, step_number, total_steps, percent_complete)
+ProgressCallback = Callable[[str, int, int, float], None]
 from .preprocessing import preprocess
 from .skeleton import extract_skeleton, clean_skeleton, analyze_skeleton
 from .tracing import trace_paths, merge_nearby_endpoints, sort_paths_for_plotting, filter_paths, Path as TracedPath
@@ -59,6 +64,7 @@ class RasterToVectorConverter:
         input_path: Union[str, Path, np.ndarray],
         output_path: Optional[Union[str, Path]] = None,
         seed: Optional[int] = None,
+        progress_callback: Optional[ProgressCallback] = None,
     ) -> ConversionResult:
         """Convert a raster image to vector.
 
@@ -66,15 +72,26 @@ class RasterToVectorConverter:
             input_path: Input image path or numpy array
             output_path: Output SVG path (optional - if None, SVG is not saved)
             seed: Random seed for reproducible sketchy effects
+            progress_callback: Optional callback for progress updates
+                              (step_name, step_number, total_steps, percent)
 
         Returns:
             ConversionResult with SVG, paths, and statistics
         """
+        total_steps = 10
+
+        def report_progress(step_name: str, step_num: int):
+            if progress_callback:
+                percent = (step_num / total_steps) * 100
+                progress_callback(step_name, step_num, total_steps, percent)
+
         # Step 1: Preprocess image
+        report_progress("Preprocessing image", 1)
         binary, original_size = preprocess(input_path, self.config)
         source_width, source_height = original_size
 
         # Step 2: Extract skeleton
+        report_progress("Extracting skeleton", 2)
         skeleton = extract_skeleton(binary)
         skeleton = clean_skeleton(
             skeleton,
@@ -83,12 +100,15 @@ class RasterToVectorConverter:
         )
 
         # Step 3: Analyze skeleton
+        report_progress("Analyzing skeleton", 3)
         analysis = analyze_skeleton(skeleton)
 
         # Step 4: Trace paths
+        report_progress("Tracing paths", 4)
         paths = trace_paths(skeleton, min_path_length=self.config.min_path_length)
 
         # Step 5: Merge nearby endpoints if configured
+        report_progress("Merging endpoints", 5)
         if self.config.merge_nearby_endpoints:
             paths = merge_nearby_endpoints(paths, self.config.merge_distance)
 
@@ -96,6 +116,7 @@ class RasterToVectorConverter:
         paths = filter_paths(paths, min_length=self.config.min_path_length)
 
         # Step 7: Expand paths for thickness preservation (if enabled)
+        report_progress("Processing thickness", 6)
         thickness_expanded = False
         if self.config.preserve_thickness or self.config.fill_hatching:
             paths = expand_paths_for_thickness(
@@ -125,13 +146,16 @@ class RasterToVectorConverter:
                 paths.extend(cross_paths)
 
         # Step 8: Sort paths for efficient plotting
+        report_progress("Sorting paths", 7)
         if self.config.line_sorting:
             paths = sort_paths_for_plotting(paths)
 
         # Step 9: Process paths (simplify, smooth, add effects, fit curves)
+        report_progress("Applying effects", 8)
         processed_paths = process_all_paths(paths, self.config, seed)
 
         # Step 10: Determine output dimensions
+        report_progress("Creating SVG", 9)
         if self.config.output_width and self.config.output_height:
             out_width = self.config.output_width
             out_height = self.config.output_height
@@ -152,6 +176,7 @@ class RasterToVectorConverter:
         )
 
         # Step 12: Save if output path provided
+        report_progress("Finalizing", 10)
         if output_path:
             save_svg(svg_doc, output_path)
 

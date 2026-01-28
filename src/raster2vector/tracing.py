@@ -5,6 +5,12 @@ from typing import List, Tuple, Set, Optional
 from dataclasses import dataclass
 from collections import deque
 
+try:
+    from scipy.spatial import cKDTree
+    KDTREE_AVAILABLE = True
+except ImportError:
+    KDTREE_AVAILABLE = False
+
 from .skeleton import find_neighbors, analyze_skeleton
 
 
@@ -205,9 +211,9 @@ def _trace_loop(
 
 
 def merge_nearby_endpoints(
-    paths: List[Path], distance_threshold: float = 3.0, max_iterations: int = 100
+    paths: List[Path], distance_threshold: float = 3.0, max_iterations: int = 50
 ) -> List[Path]:
-    """Merge paths with nearby endpoints.
+    """Merge paths with nearby endpoints using spatial indexing for speed.
 
     This helps connect paths that were split due to small gaps
     or noise in the original image.
@@ -223,104 +229,145 @@ def merge_nearby_endpoints(
     if len(paths) <= 1:
         return paths
 
-    # Separate closed and open paths
+    # Separate closed and open paths - closed paths don't need merging
     closed_paths = [p for p in paths if p.is_closed]
     open_paths = [p for p in paths if not p.is_closed]
 
     if len(open_paths) <= 1:
         return paths
 
-    # Convert to mutable list of point lists for easier merging
-    path_points = [list(p.points) for p in open_paths]
+    # Use union-find for efficient merging
+    n = len(open_paths)
+    parent = list(range(n))
 
-    dist_sq_threshold = distance_threshold * distance_threshold
+    def find(x):
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
 
-    iteration = 0
-    changed = True
+    def union(x, y):
+        px, py = find(x), find(y)
+        if px != py:
+            parent[px] = py
+            return True
+        return False
 
-    while changed and iteration < max_iterations:
-        changed = False
-        iteration += 1
+    # Build list of all endpoints with their path index and position (start=0, end=1)
+    endpoints = []
+    endpoint_info = []  # (path_idx, is_end)
 
-        i = 0
-        while i < len(path_points):
-            if len(path_points) <= 1:
+    for i, p in enumerate(open_paths):
+        endpoints.append(p.points[0])   # start
+        endpoint_info.append((i, False))
+        endpoints.append(p.points[-1])  # end
+        endpoint_info.append((i, True))
+
+    endpoints = np.array(endpoints)
+
+    # Use KDTree for fast nearest-neighbor queries
+    if KDTREE_AVAILABLE and len(endpoints) > 10:
+        tree = cKDTree(endpoints)
+        pairs = tree.query_pairs(r=distance_threshold)
+
+        # Process pairs - connect paths whose endpoints are close
+        merge_instructions = []  # (path_i, path_j, i_is_end, j_is_end)
+
+        for ep_i, ep_j in pairs:
+            path_i, is_end_i = endpoint_info[ep_i]
+            path_j, is_end_j = endpoint_info[ep_j]
+
+            if path_i != path_j:
+                merge_instructions.append((path_i, path_j, is_end_i, is_end_j))
+
+        # Sort by distance (approximate - using endpoint indices as proxy)
+        # and process merges using union-find
+        for path_i, path_j, is_end_i, is_end_j in merge_instructions:
+            union(path_i, path_j)
+    else:
+        # Fallback for small path counts or no scipy
+        for i in range(len(endpoints)):
+            for j in range(i + 1, len(endpoints)):
+                dist = np.sqrt((endpoints[i][0] - endpoints[j][0])**2 +
+                              (endpoints[i][1] - endpoints[j][1])**2)
+                if dist <= distance_threshold:
+                    path_i, _ = endpoint_info[i]
+                    path_j, _ = endpoint_info[j]
+                    if path_i != path_j:
+                        union(path_i, path_j)
+
+    # Group paths by their root in union-find
+    groups = {}
+    for i in range(n):
+        root = find(i)
+        if root not in groups:
+            groups[root] = []
+        groups[root].append(i)
+
+    # Merge paths within each group
+    merged_paths = []
+
+    for group_indices in groups.values():
+        if len(group_indices) == 1:
+            merged_paths.append(open_paths[group_indices[0]])
+            continue
+
+        # Get all paths in this group
+        group_paths = [list(open_paths[i].points) for i in group_indices]
+
+        # Simple greedy merge: start with first path, extend by finding closest endpoints
+        result = group_paths[0]
+        remaining = group_paths[1:]
+
+        for _ in range(min(len(remaining) * 2, max_iterations)):
+            if not remaining:
                 break
 
-            current = path_points[i]
-            if len(current) == 0:
-                path_points.pop(i)
-                continue
+            best_idx = None
+            best_dist = float('inf')
+            best_conn = None
 
-            c_start = current[0]
-            c_end = current[-1]
+            r_start = result[0]
+            r_end = result[-1]
 
-            best_match = None
-            best_dist_sq = dist_sq_threshold
+            for idx, path in enumerate(remaining):
+                p_start = path[0]
+                p_end = path[-1]
 
-            # Find the closest endpoint match
-            for j in range(len(path_points)):
-                if i == j:
-                    continue
+                # Check all four connection types
+                d1 = (r_end[0] - p_start[0])**2 + (r_end[1] - p_start[1])**2
+                if d1 < best_dist:
+                    best_dist, best_idx, best_conn = d1, idx, ("end", False)
 
-                other = path_points[j]
-                if len(other) == 0:
-                    continue
+                d2 = (r_end[0] - p_end[0])**2 + (r_end[1] - p_end[1])**2
+                if d2 < best_dist:
+                    best_dist, best_idx, best_conn = d2, idx, ("end", True)
 
-                o_start = other[0]
-                o_end = other[-1]
+                d3 = (r_start[0] - p_start[0])**2 + (r_start[1] - p_start[1])**2
+                if d3 < best_dist:
+                    best_dist, best_idx, best_conn = d3, idx, ("start", True)
 
-                # Check all four connection possibilities using squared distance
-                # end-to-start
-                d = (c_end[0] - o_start[0])**2 + (c_end[1] - o_start[1])**2
-                if d < best_dist_sq:
-                    best_dist_sq = d
-                    best_match = (j, "end_to_start", False)
+                d4 = (r_start[0] - p_end[0])**2 + (r_start[1] - p_end[1])**2
+                if d4 < best_dist:
+                    best_dist, best_idx, best_conn = d4, idx, ("start", False)
 
-                # end-to-end
-                d = (c_end[0] - o_end[0])**2 + (c_end[1] - o_end[1])**2
-                if d < best_dist_sq:
-                    best_dist_sq = d
-                    best_match = (j, "end_to_end", True)
+            if best_idx is not None:
+                path = remaining.pop(best_idx)
+                connect_at, reverse = best_conn
 
-                # start-to-start
-                d = (c_start[0] - o_start[0])**2 + (c_start[1] - o_start[1])**2
-                if d < best_dist_sq:
-                    best_dist_sq = d
-                    best_match = (j, "start_to_start", True)
+                if reverse:
+                    path = list(reversed(path))
 
-                # start-to-end
-                d = (c_start[0] - o_end[0])**2 + (c_start[1] - o_end[1])**2
-                if d < best_dist_sq:
-                    best_dist_sq = d
-                    best_match = (j, "start_to_end", False)
-
-            if best_match:
-                j, conn_type, reverse_other = best_match
-                other = path_points[j]
-
-                if reverse_other:
-                    other = list(reversed(other))
-
-                if conn_type.startswith("end"):
-                    current.extend(other[1:])  # Skip duplicate point
+                if connect_at == "end":
+                    result.extend(path[1:])
                 else:
-                    path_points[i] = other[:-1] + current
-                    current = path_points[i]
+                    result = path[:-1] + result
 
-                # Remove the merged path
-                path_points.pop(j)
-                if j < i:
-                    i -= 1
+        # Add any remaining paths that couldn't be merged
+        merged_paths.append(Path(points=result))
+        for path in remaining:
+            merged_paths.append(Path(points=path))
 
-                changed = True
-            else:
-                i += 1
-
-    # Convert back to Path objects
-    merged = closed_paths + [Path(points=pts) for pts in path_points if len(pts) > 0]
-
-    return merged
+    return closed_paths + merged_paths
 
 
 def _distance(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:

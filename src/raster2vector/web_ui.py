@@ -140,11 +140,12 @@ def convert_image(
         msg += f"Elapsed: {format_time(elapsed)}\n"
 
         # Estimate remaining time based on progress
-        if percent > 0:
+        if percent > 0 and percent < 100:
             estimated_total = elapsed / (percent / 100)
-            remaining = estimated_total - elapsed
-            if remaining > 0:
-                msg += f"Estimated remaining: {format_time(remaining)}\n"
+            remaining = max(0, estimated_total - elapsed)
+            msg += f"Estimated remaining: {format_time(remaining)}\n"
+        elif percent == 0:
+            msg += "Estimated remaining: calculating...\n"
 
         return msg
 
@@ -227,12 +228,17 @@ def convert_image(
         thread.start()
 
         # Yield progress updates while conversion runs
-        last_percent = -1
+        last_message = ""
         while thread.is_alive():
-            thread.join(timeout=0.2)  # Check every 200ms
-            if progress_state["percent"] != last_percent:
-                last_percent = progress_state["percent"]
-                yield None, build_progress_message()
+            thread.join(timeout=0.1)  # Check every 100ms
+            current_message = build_progress_message()
+            if current_message != last_message:
+                last_message = current_message
+                yield None, current_message
+
+        # Yield one final progress update before showing results
+        if progress_state["percent"] > 0:
+            yield None, build_progress_message()
 
         # Check for errors
         if result_holder["error"]:

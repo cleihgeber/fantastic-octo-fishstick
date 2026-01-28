@@ -378,8 +378,7 @@ def _distance(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
 def sort_paths_for_plotting(paths: List[Path]) -> List[Path]:
     """Sort paths to minimize pen travel distance.
 
-    Uses a greedy nearest-neighbor approach to order paths
-    such that the end of one path is close to the start of the next.
+    Uses a greedy nearest-neighbor approach with KDTree for speed.
 
     Args:
         paths: List of paths to sort
@@ -387,6 +386,103 @@ def sort_paths_for_plotting(paths: List[Path]) -> List[Path]:
     Returns:
         Sorted list of paths (may have some paths reversed)
     """
+    if len(paths) <= 1:
+        return paths
+
+    n = len(paths)
+
+    # For small numbers of paths, use simple O(n²) approach
+    if n <= 50 or not KDTREE_AVAILABLE:
+        return _sort_paths_simple(paths)
+
+    # Build arrays of start and end points
+    # Each path has two entries: index*2 for start, index*2+1 for end
+    endpoints = []
+    for p in paths:
+        endpoints.append(p.points[0])
+        endpoints.append(p.points[-1])
+
+    endpoints = np.array(endpoints)
+    tree = cKDTree(endpoints)
+
+    sorted_paths = []
+    used = set()
+    current_pos = np.array([0.0, 0.0])
+
+    # Find starting path closest to origin
+    _, nearest_idx = tree.query(current_pos, k=1)
+    path_idx = nearest_idx // 2
+    is_end = nearest_idx % 2 == 1
+
+    if is_end and not paths[path_idx].is_closed:
+        sorted_paths.append(paths[path_idx].reverse())
+    else:
+        sorted_paths.append(paths[path_idx])
+    used.add(path_idx)
+    current_pos = np.array(sorted_paths[-1].points[-1])
+
+    # Greedily add nearest paths
+    while len(used) < n:
+        # Query for k nearest neighbors (more than 1 in case some are already used)
+        k = min(20, 2 * (n - len(used)) + 2)
+        distances, indices = tree.query(current_pos, k=k)
+
+        # Handle single result case
+        if np.isscalar(distances):
+            distances = [distances]
+            indices = [indices]
+
+        found = False
+        for idx in indices:
+            path_idx = idx // 2
+            if path_idx not in used:
+                is_end = idx % 2 == 1
+
+                if is_end and not paths[path_idx].is_closed:
+                    sorted_paths.append(paths[path_idx].reverse())
+                else:
+                    sorted_paths.append(paths[path_idx])
+
+                used.add(path_idx)
+                current_pos = np.array(sorted_paths[-1].points[-1])
+                found = True
+                break
+
+        # If we didn't find an unused path in the k-nearest, fall back to scanning
+        if not found:
+            best_idx = None
+            best_dist = float('inf')
+            best_reversed = False
+
+            for i in range(n):
+                if i in used:
+                    continue
+
+                d_start = (current_pos[0] - paths[i].points[0][0])**2 + (current_pos[1] - paths[i].points[0][1])**2
+                d_end = (current_pos[0] - paths[i].points[-1][0])**2 + (current_pos[1] - paths[i].points[-1][1])**2
+
+                if d_start < best_dist:
+                    best_dist = d_start
+                    best_idx = i
+                    best_reversed = False
+                if d_end < best_dist and not paths[i].is_closed:
+                    best_dist = d_end
+                    best_idx = i
+                    best_reversed = True
+
+            if best_idx is not None:
+                if best_reversed:
+                    sorted_paths.append(paths[best_idx].reverse())
+                else:
+                    sorted_paths.append(paths[best_idx])
+                used.add(best_idx)
+                current_pos = np.array(sorted_paths[-1].points[-1])
+
+    return sorted_paths
+
+
+def _sort_paths_simple(paths: List[Path]) -> List[Path]:
+    """Simple O(n²) path sorting for small path counts."""
     if len(paths) <= 1:
         return paths
 

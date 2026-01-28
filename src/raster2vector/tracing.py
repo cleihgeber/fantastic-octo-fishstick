@@ -304,7 +304,7 @@ def merge_nearby_endpoints(
                         union(path_i, path_j)
 
     # Group paths by their root in union-find
-   groups = {}
+    groups = {}
     for i in range(n):
         root = find(i)
         groups.setdefault(root, []).append(i)

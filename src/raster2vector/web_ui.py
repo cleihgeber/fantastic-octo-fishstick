@@ -103,31 +103,124 @@ def convert_image(
         yield None, "Please upload an image first."
         return
 
+    # Step names for display
+    STEP_NAMES = {
+        1: "Preprocessing image",
+        2: "Extracting skeleton",
+        3: "Analyzing skeleton",
+        4: "Tracing paths",
+        5: "Merging endpoints",
+        6: "Processing thickness",
+        7: "Sorting paths",
+        8: "Applying effects",
+        9: "Creating SVG",
+        10: "Finalizing",
+    }
+
+    # Estimated relative weights for each step (will be updated with actual times)
+    # These are initial guesses - heavier steps get higher weights
+    STEP_WEIGHTS = {
+        1: 1.0,   # Preprocessing
+        2: 2.0,   # Skeleton extraction
+        3: 0.5,   # Analyzing
+        4: 1.5,   # Tracing
+        5: 2.0,   # Merging (can be slow)
+        6: 1.5,   # Thickness
+        7: 2.0,   # Sorting (can be slow)
+        8: 1.5,   # Effects
+        9: 1.0,   # SVG creation
+        10: 0.5,  # Finalizing
+    }
+
     # Progress tracking state
     progress_state = {
         "step_name": "Starting...",
         "step_num": 0,
+        "prev_step_num": 0,
         "total_steps": 10,
         "percent": 0.0,
         "start_time": time.time(),
-        "step_times": [],
+        "step_start_time": time.time(),
+        "step_times": {},  # step_num -> duration
+        "completed_steps": [],
     }
 
     def format_time(seconds: float) -> str:
         """Format seconds into human readable string."""
+        if seconds < 0.1:
+            return "<0.1s"
         if seconds < 60:
             return f"{seconds:.1f}s"
         minutes = int(seconds // 60)
         secs = int(seconds % 60)
         return f"{minutes}m {secs}s"
 
+    def estimate_step_remaining(step_num: int, step_elapsed: float) -> float:
+        """Estimate remaining time for current step."""
+        # If we have historical data for this step type, use it
+        if step_num in progress_state["step_times"]:
+            historical = progress_state["step_times"][step_num]
+            # Estimate based on historical, but don't go below current elapsed
+            return max(0, historical - step_elapsed)
+
+        # Otherwise, use average of completed steps scaled by weight
+        completed = progress_state["completed_steps"]
+        if completed:
+            # Calculate average time per weight unit
+            total_time = sum(progress_state["step_times"].get(s, 0) for s in completed)
+            total_weight = sum(STEP_WEIGHTS.get(s, 1.0) for s in completed)
+            if total_weight > 0:
+                time_per_weight = total_time / total_weight
+                current_weight = STEP_WEIGHTS.get(step_num, 1.0)
+                estimated_duration = time_per_weight * current_weight
+                return max(0, estimated_duration - step_elapsed)
+
+        # No data yet - assume current step will take 2x elapsed so far
+        return step_elapsed
+
+    def estimate_remaining_steps(current_step: int) -> float:
+        """Estimate total time for remaining steps after current."""
+        remaining_steps = [s for s in range(current_step + 1, 11)]
+        if not remaining_steps:
+            return 0.0
+
+        completed = progress_state["completed_steps"]
+        if completed:
+            # Use actual timing data to estimate
+            total_time = sum(progress_state["step_times"].get(s, 0) for s in completed)
+            total_weight = sum(STEP_WEIGHTS.get(s, 1.0) for s in completed)
+            if total_weight > 0:
+                time_per_weight = total_time / total_weight
+                remaining_weight = sum(STEP_WEIGHTS.get(s, 1.0) for s in remaining_steps)
+                return time_per_weight * remaining_weight
+
+        # No completed steps yet - can't estimate
+        return 0.0
+
     def build_progress_message() -> str:
         """Build the progress status message."""
-        elapsed = time.time() - progress_state["start_time"]
-        percent = progress_state["percent"]
+        now = time.time()
+        elapsed = now - progress_state["start_time"]
+        step_elapsed = now - progress_state["step_start_time"]
         step_name = progress_state["step_name"]
         step_num = progress_state["step_num"]
         total = progress_state["total_steps"]
+
+        # Calculate overall progress based on completed steps and current step progress
+        completed_weight = sum(STEP_WEIGHTS.get(s, 1.0) for s in progress_state["completed_steps"])
+        total_weight = sum(STEP_WEIGHTS.get(s, 1.0) for s in range(1, total + 1))
+
+        # Estimate progress within current step (assume linear within step)
+        current_step_weight = STEP_WEIGHTS.get(step_num, 1.0)
+        step_remaining = estimate_step_remaining(step_num, step_elapsed)
+        step_total_estimate = step_elapsed + step_remaining
+        if step_total_estimate > 0:
+            step_progress = min(0.95, step_elapsed / step_total_estimate)  # Cap at 95% until done
+        else:
+            step_progress = 0.5
+
+        current_partial_weight = current_step_weight * step_progress
+        percent = ((completed_weight + current_partial_weight) / total_weight) * 100 if total_weight > 0 else 0
 
         # Create progress bar
         bar_width = 20
@@ -136,23 +229,52 @@ def convert_image(
 
         msg = f"Converting...\n\n"
         msg += f"[{bar}] {percent:.0f}%\n\n"
-        msg += f"Step {step_num}/{total}: {step_name}\n"
-        msg += f"Elapsed: {format_time(elapsed)}\n"
 
-        # Estimate remaining time based on progress
-        if percent > 0 and percent < 100:
-            estimated_total = elapsed / (percent / 100)
-            remaining = max(0, estimated_total - elapsed)
-            msg += f"Estimated remaining: {format_time(remaining)}\n"
-        elif percent == 0:
-            msg += "Estimated remaining: calculating...\n"
+        # Current step info
+        msg += f"Step {step_num}/{total}: {step_name}\n"
+        msg += f"  Step time: {format_time(step_elapsed)}"
+
+        # Estimate for current step
+        if step_remaining > 0:
+            msg += f" (est. {format_time(step_remaining)} remaining)\n"
+        else:
+            msg += "\n"
+
+        msg += f"\nTotal elapsed: {format_time(elapsed)}\n"
+
+        # Overall time estimate
+        if step_num > 0:
+            remaining_current = step_remaining
+            remaining_future = estimate_remaining_steps(step_num)
+            total_remaining = remaining_current + remaining_future
+
+            if total_remaining > 0:
+                msg += f"Estimated remaining: {format_time(total_remaining)}\n"
+
+        # Show completed step times
+        if progress_state["completed_steps"]:
+            msg += f"\nCompleted steps:\n"
+            for s in progress_state["completed_steps"][-5:]:  # Show last 5
+                step_time = progress_state["step_times"].get(s, 0)
+                msg += f"  {s}. {STEP_NAMES.get(s, 'Step')}: {format_time(step_time)}\n"
 
         return msg
 
     def progress_callback(step_name: str, step_num: int, total_steps: int, percent: float):
         """Callback to receive progress updates from converter."""
+        now = time.time()
+
+        # Record time for previous step if it changed
+        prev_step = progress_state["prev_step_num"]
+        if prev_step > 0 and step_num != prev_step:
+            step_duration = now - progress_state["step_start_time"]
+            progress_state["step_times"][prev_step] = step_duration
+            progress_state["completed_steps"].append(prev_step)
+            progress_state["step_start_time"] = now
+
         progress_state["step_name"] = step_name
         progress_state["step_num"] = step_num
+        progress_state["prev_step_num"] = step_num
         progress_state["total_steps"] = total_steps
         progress_state["percent"] = percent
 

@@ -205,7 +205,7 @@ def _trace_loop(
 
 
 def merge_nearby_endpoints(
-    paths: List[Path], distance_threshold: float = 3.0
+    paths: List[Path], distance_threshold: float = 3.0, max_iterations: int = 100
 ) -> List[Path]:
     """Merge paths with nearby endpoints.
 
@@ -215,6 +215,7 @@ def merge_nearby_endpoints(
     Args:
         paths: List of paths
         distance_threshold: Maximum distance to merge
+        max_iterations: Maximum merge iterations to prevent infinite loops
 
     Returns:
         List of merged paths
@@ -222,63 +223,102 @@ def merge_nearby_endpoints(
     if len(paths) <= 1:
         return paths
 
-    merged = []
-    used = set()
+    # Separate closed and open paths
+    closed_paths = [p for p in paths if p.is_closed]
+    open_paths = [p for p in paths if not p.is_closed]
 
-    for i, path1 in enumerate(paths):
-        if i in used or path1.is_closed:
-            if i not in used and path1.is_closed:
-                merged.append(path1)
-                used.add(i)
-            continue
+    if len(open_paths) <= 1:
+        return paths
 
-        # Try to extend this path by merging with others
-        current_path = list(path1.points)
-        used.add(i)
-        changed = True
+    # Convert to mutable list of point lists for easier merging
+    path_points = [list(p.points) for p in open_paths]
 
-        while changed:
-            changed = False
+    dist_sq_threshold = distance_threshold * distance_threshold
 
-            for j, path2 in enumerate(paths):
-                if j in used or path2.is_closed:
+    iteration = 0
+    changed = True
+
+    while changed and iteration < max_iterations:
+        changed = False
+        iteration += 1
+
+        i = 0
+        while i < len(path_points):
+            if len(path_points) <= 1:
+                break
+
+            current = path_points[i]
+            if len(current) == 0:
+                path_points.pop(i)
+                continue
+
+            c_start = current[0]
+            c_end = current[-1]
+
+            best_match = None
+            best_dist_sq = dist_sq_threshold
+
+            # Find the closest endpoint match
+            for j in range(len(path_points)):
+                if i == j:
                     continue
 
-                p2_start = path2.points[0]
-                p2_end = path2.points[-1]
-                c_start = current_path[0]
-                c_end = current_path[-1]
+                other = path_points[j]
+                if len(other) == 0:
+                    continue
 
-                # Check all four connection possibilities
-                connections = [
-                    (_distance(c_end, p2_start), "end_to_start", False),
-                    (_distance(c_end, p2_end), "end_to_end", True),
-                    (_distance(c_start, p2_start), "start_to_start", True),
-                    (_distance(c_start, p2_end), "start_to_end", False),
-                ]
+                o_start = other[0]
+                o_end = other[-1]
 
-                for dist, conn_type, reverse_p2 in connections:
-                    if dist <= distance_threshold:
-                        p2_points = list(reversed(path2.points)) if reverse_p2 else list(path2.points)
+                # Check all four connection possibilities using squared distance
+                # end-to-start
+                d = (c_end[0] - o_start[0])**2 + (c_end[1] - o_start[1])**2
+                if d < best_dist_sq:
+                    best_dist_sq = d
+                    best_match = (j, "end_to_start", False)
 
-                        if conn_type.startswith("end"):
-                            current_path.extend(p2_points[1:])  # Skip duplicate point
-                        else:
-                            current_path = p2_points[:-1] + current_path
+                # end-to-end
+                d = (c_end[0] - o_end[0])**2 + (c_end[1] - o_end[1])**2
+                if d < best_dist_sq:
+                    best_dist_sq = d
+                    best_match = (j, "end_to_end", True)
 
-                        used.add(j)
-                        changed = True
-                        break
+                # start-to-start
+                d = (c_start[0] - o_start[0])**2 + (c_start[1] - o_start[1])**2
+                if d < best_dist_sq:
+                    best_dist_sq = d
+                    best_match = (j, "start_to_start", True)
 
-                if changed:
-                    break
+                # start-to-end
+                d = (c_start[0] - o_end[0])**2 + (c_start[1] - o_end[1])**2
+                if d < best_dist_sq:
+                    best_dist_sq = d
+                    best_match = (j, "start_to_end", False)
 
-        merged.append(Path(points=current_path))
+            if best_match:
+                j, conn_type, reverse_other = best_match
+                other = path_points[j]
 
-    # Add any remaining unused paths
-    for i, path in enumerate(paths):
-        if i not in used:
-            merged.append(path)
+                if reverse_other:
+                    other = list(reversed(other))
+
+                if conn_type.startswith("end"):
+                    current.extend(other[1:])  # Skip duplicate point
+                else:
+                    path_points[i] = other[:-1] + current
+                    current = path_points[i]
+
+                # Remove the merged path
+                path_points.pop(j)
+                if j < i:
+                    i -= 1
+
+                changed = True
+            else:
+                i += 1
+
+    # Convert back to Path objects
+    merged = closed_paths + [Path(points=pts) for pts in path_points if len(pts) > 0]
 
     return merged
 

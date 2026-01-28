@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 
 class ThresholdMethod(Enum):
@@ -20,6 +20,178 @@ class SketchStyle(Enum):
     NATURAL = "natural"  # Slight variation, like careful hand drawing
     SKETCHY = "sketchy"  # More variation, like quick sketches
     ROUGH = "rough"  # Maximum variation, very hand-drawn look
+
+
+class PaperSize(Enum):
+    """Standard paper sizes with dimensions in mm (width x height in portrait)."""
+
+    # ISO A Series
+    A0 = "a0"
+    A1 = "a1"
+    A2 = "a2"
+    A3 = "a3"
+    A4 = "a4"
+    A5 = "a5"
+    A6 = "a6"
+
+    # ISO B Series
+    B0 = "b0"
+    B1 = "b1"
+    B2 = "b2"
+    B3 = "b3"
+    B4 = "b4"
+    B5 = "b5"
+
+    # US Sizes
+    LETTER = "letter"
+    LEGAL = "legal"
+    TABLOID = "tabloid"
+
+    # Other common sizes
+    POSTCARD = "postcard"
+    SQUARE_100 = "square100"
+    SQUARE_150 = "square150"
+    SQUARE_200 = "square200"
+
+    # Custom (use with custom dimensions)
+    CUSTOM = "custom"
+
+
+# Paper dimensions in mm (width, height) in portrait orientation
+PAPER_DIMENSIONS: Dict[PaperSize, Tuple[float, float]] = {
+    # ISO A Series (based on √2 ratio)
+    PaperSize.A0: (841, 1189),
+    PaperSize.A1: (594, 841),
+    PaperSize.A2: (420, 594),
+    PaperSize.A3: (297, 420),
+    PaperSize.A4: (210, 297),
+    PaperSize.A5: (148, 210),
+    PaperSize.A6: (105, 148),
+
+    # ISO B Series
+    PaperSize.B0: (1000, 1414),
+    PaperSize.B1: (707, 1000),
+    PaperSize.B2: (500, 707),
+    PaperSize.B3: (353, 500),
+    PaperSize.B4: (250, 353),
+    PaperSize.B5: (176, 250),
+
+    # US Sizes (converted to mm)
+    PaperSize.LETTER: (216, 279),  # 8.5" x 11"
+    PaperSize.LEGAL: (216, 356),   # 8.5" x 14"
+    PaperSize.TABLOID: (279, 432), # 11" x 17"
+
+    # Other common sizes
+    PaperSize.POSTCARD: (100, 148),
+    PaperSize.SQUARE_100: (100, 100),
+    PaperSize.SQUARE_150: (150, 150),
+    PaperSize.SQUARE_200: (200, 200),
+
+    # Custom placeholder
+    PaperSize.CUSTOM: (210, 297),
+}
+
+
+def get_paper_size(
+    paper: PaperSize,
+    landscape: bool = False,
+    custom_width: Optional[float] = None,
+    custom_height: Optional[float] = None,
+) -> Tuple[float, float]:
+    """Get paper dimensions in mm.
+
+    Args:
+        paper: Paper size preset
+        landscape: If True, swap width and height
+        custom_width: Custom width for CUSTOM paper size
+        custom_height: Custom height for CUSTOM paper size
+
+    Returns:
+        Tuple of (width_mm, height_mm)
+    """
+    if paper == PaperSize.CUSTOM:
+        if custom_width is None or custom_height is None:
+            raise ValueError("Custom paper size requires custom_width and custom_height")
+        width, height = custom_width, custom_height
+    else:
+        width, height = PAPER_DIMENSIONS[paper]
+
+    if landscape:
+        return (height, width)
+    return (width, height)
+
+
+def paper_size_from_string(name: str) -> PaperSize:
+    """Convert string to PaperSize enum.
+
+    Args:
+        name: Paper size name (case-insensitive)
+
+    Returns:
+        PaperSize enum value
+
+    Raises:
+        ValueError: If name is not recognized
+    """
+    name_lower = name.lower().strip()
+
+    # Direct enum value match
+    for paper in PaperSize:
+        if paper.value == name_lower:
+            return paper
+
+    # Common aliases
+    aliases = {
+        "a0": PaperSize.A0,
+        "a1": PaperSize.A1,
+        "a2": PaperSize.A2,
+        "a3": PaperSize.A3,
+        "a4": PaperSize.A4,
+        "a5": PaperSize.A5,
+        "a6": PaperSize.A6,
+        "b0": PaperSize.B0,
+        "b1": PaperSize.B1,
+        "b2": PaperSize.B2,
+        "b3": PaperSize.B3,
+        "b4": PaperSize.B4,
+        "b5": PaperSize.B5,
+        "letter": PaperSize.LETTER,
+        "us-letter": PaperSize.LETTER,
+        "usletter": PaperSize.LETTER,
+        "legal": PaperSize.LEGAL,
+        "us-legal": PaperSize.LEGAL,
+        "tabloid": PaperSize.TABLOID,
+        "ledger": PaperSize.TABLOID,
+        "postcard": PaperSize.POSTCARD,
+        "100x100": PaperSize.SQUARE_100,
+        "150x150": PaperSize.SQUARE_150,
+        "200x200": PaperSize.SQUARE_200,
+        "square100": PaperSize.SQUARE_100,
+        "square150": PaperSize.SQUARE_150,
+        "square200": PaperSize.SQUARE_200,
+        "custom": PaperSize.CUSTOM,
+    }
+
+    if name_lower in aliases:
+        return aliases[name_lower]
+
+    raise ValueError(
+        f"Unknown paper size: '{name}'. "
+        f"Valid sizes: {', '.join(p.value for p in PaperSize if p != PaperSize.CUSTOM)}"
+    )
+
+
+def list_paper_sizes() -> Dict[str, Tuple[float, float]]:
+    """Get all available paper sizes and their dimensions.
+
+    Returns:
+        Dict mapping paper name to (width, height) in mm
+    """
+    return {
+        paper.value: dims
+        for paper, dims in PAPER_DIMENSIONS.items()
+        if paper != PaperSize.CUSTOM
+    }
 
 
 @dataclass
@@ -150,6 +322,55 @@ class ConversionConfig:
             for key, value in preset.items():
                 if hasattr(self, key):
                     setattr(self, key, value)
+
+    @classmethod
+    def for_paper_size(
+        cls,
+        paper: PaperSize = PaperSize.A4,
+        landscape: bool = False,
+        custom_width: Optional[float] = None,
+        custom_height: Optional[float] = None,
+        **kwargs,
+    ) -> "ConversionConfig":
+        """Create config with a specific paper size.
+
+        Args:
+            paper: Paper size preset (A4, A3, Letter, etc.)
+            landscape: If True, use landscape orientation
+            custom_width: Width in mm for custom paper size
+            custom_height: Height in mm for custom paper size
+            **kwargs: Additional config options to override
+
+        Returns:
+            ConversionConfig with specified paper size
+
+        Example:
+            # A3 landscape
+            config = ConversionConfig.for_paper_size(PaperSize.A3, landscape=True)
+
+            # US Letter
+            config = ConversionConfig.for_paper_size(PaperSize.LETTER)
+
+            # Custom size
+            config = ConversionConfig.for_paper_size(
+                PaperSize.CUSTOM,
+                custom_width=300,
+                custom_height=200
+            )
+        """
+        width, height = get_paper_size(paper, landscape, custom_width, custom_height)
+
+        defaults = {
+            "output_width": width,
+            "output_height": height,
+            "stroke_width": 0.4,
+            "line_sorting": True,
+            "sketch_style": SketchStyle.NATURAL,
+            "curve_fitting": True,
+        }
+        defaults.update(kwargs)
+
+        return cls(**defaults)
 
     @classmethod
     def for_pen_plotter(cls, width_mm: float = 210, height_mm: float = 297) -> "ConversionConfig":

@@ -10,8 +10,35 @@ import tempfile
 import os
 from typing import Optional
 
-from .config import ConversionConfig, SketchStyle, ThresholdMethod
+from .config import (
+    ConversionConfig,
+    SketchStyle,
+    ThresholdMethod,
+    PaperSize,
+    PAPER_DIMENSIONS,
+    get_paper_size,
+)
 from .core import RasterToVectorConverter
+
+
+# Paper size display names for GUI
+PAPER_SIZE_OPTIONS = [
+    ("Custom", None),
+    ("A0 (841x1189 mm)", PaperSize.A0),
+    ("A1 (594x841 mm)", PaperSize.A1),
+    ("A2 (420x594 mm)", PaperSize.A2),
+    ("A3 (297x420 mm)", PaperSize.A3),
+    ("A4 (210x297 mm)", PaperSize.A4),
+    ("A5 (148x210 mm)", PaperSize.A5),
+    ("A6 (105x148 mm)", PaperSize.A6),
+    ("Letter (216x279 mm)", PaperSize.LETTER),
+    ("Legal (216x356 mm)", PaperSize.LEGAL),
+    ("Tabloid (279x432 mm)", PaperSize.TABLOID),
+    ("Postcard (100x148 mm)", PaperSize.POSTCARD),
+    ("Square 100mm", PaperSize.SQUARE_100),
+    ("Square 150mm", PaperSize.SQUARE_150),
+    ("Square 200mm", PaperSize.SQUARE_200),
+]
 
 
 class RasterToVectorGUI:
@@ -44,6 +71,10 @@ class RasterToVectorGUI:
         """Initialize tkinter variables for all controls."""
         # Style
         self.style_var = tk.StringVar(value="natural")
+
+        # Paper size
+        self.paper_size_var = tk.StringVar(value="Custom")
+        self.landscape_var = tk.BooleanVar(value=False)
 
         # Output dimensions
         self.width_var = tk.StringVar(value="")
@@ -190,23 +221,48 @@ class RasterToVectorGUI:
         style_combo.grid(row=row, column=1, sticky="w", pady=2)
         row += 1
 
-        # Output dimensions
+        # Paper size section
         ttk.Separator(parent, orient=tk.HORIZONTAL).grid(
             row=row, column=0, columnspan=2, sticky="ew", pady=10
         )
         row += 1
 
-        ttk.Label(parent, text="Output Size (mm):").grid(
-            row=row, column=0, columnspan=2, sticky="w", pady=2
+        ttk.Label(parent, text="Paper Size:").grid(row=row, column=0, sticky="w", pady=2)
+        paper_combo = ttk.Combobox(
+            parent,
+            textvariable=self.paper_size_var,
+            values=[opt[0] for opt in PAPER_SIZE_OPTIONS],
+            state="readonly",
+            width=18,
+        )
+        paper_combo.grid(row=row, column=1, sticky="w", pady=2)
+        paper_combo.bind("<<ComboboxSelected>>", self._on_paper_size_changed)
+        self.paper_combo = paper_combo
+        row += 1
+
+        # Landscape checkbox
+        ttk.Checkbutton(
+            parent,
+            text="Landscape orientation",
+            variable=self.landscape_var,
+            command=self._on_orientation_changed,
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
+        row += 1
+
+        # Custom dimensions
+        ttk.Label(parent, text="Custom Size (mm):").grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=(10, 2)
         )
         row += 1
 
         size_frame = ttk.Frame(parent)
         size_frame.grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
         ttk.Label(size_frame, text="W:").pack(side=tk.LEFT)
-        ttk.Entry(size_frame, textvariable=self.width_var, width=6).pack(side=tk.LEFT, padx=(0, 10))
+        self.width_entry = ttk.Entry(size_frame, textvariable=self.width_var, width=6)
+        self.width_entry.pack(side=tk.LEFT, padx=(0, 10))
         ttk.Label(size_frame, text="H:").pack(side=tk.LEFT)
-        ttk.Entry(size_frame, textvariable=self.height_var, width=6).pack(side=tk.LEFT)
+        self.height_entry = ttk.Entry(size_frame, textvariable=self.height_var, width=6)
+        self.height_entry.pack(side=tk.LEFT)
         row += 1
 
         # Stroke settings
@@ -480,6 +536,51 @@ class RasterToVectorGUI:
         self.file_label = ttk.Label(status_frame, text="", foreground="gray")
         self.file_label.pack(side=tk.RIGHT)
 
+    def _on_paper_size_changed(self, event=None):
+        """Handle paper size selection change."""
+        selected = self.paper_size_var.get()
+
+        # Find the PaperSize enum for selected option
+        paper_size = None
+        for name, size in PAPER_SIZE_OPTIONS:
+            if name == selected:
+                paper_size = size
+                break
+
+        if paper_size is None:
+            # Custom selected - enable manual entry
+            self.width_entry.config(state=tk.NORMAL)
+            self.height_entry.config(state=tk.NORMAL)
+        else:
+            # Preset selected - fill in dimensions and disable entry
+            width, height = get_paper_size(paper_size, self.landscape_var.get())
+            self.width_var.set(str(int(width)))
+            self.height_var.set(str(int(height)))
+            self.width_entry.config(state=tk.DISABLED)
+            self.height_entry.config(state=tk.DISABLED)
+
+    def _on_orientation_changed(self):
+        """Handle landscape/portrait toggle."""
+        selected = self.paper_size_var.get()
+
+        # Find the PaperSize enum for selected option
+        paper_size = None
+        for name, size in PAPER_SIZE_OPTIONS:
+            if name == selected:
+                paper_size = size
+                break
+
+        if paper_size is not None:
+            # Update dimensions for new orientation
+            width, height = get_paper_size(paper_size, self.landscape_var.get())
+            self.width_var.set(str(int(width)))
+            self.height_var.set(str(int(height)))
+        elif self.width_var.get() and self.height_var.get():
+            # Custom size - swap width and height
+            w, h = self.width_var.get(), self.height_var.get()
+            self.width_var.set(h)
+            self.height_var.set(w)
+
     def _apply_preset(self, event=None):
         """Apply a configuration preset."""
         preset = self.preset_combo.get()
@@ -488,18 +589,24 @@ class RasterToVectorGUI:
             self.style_var.set("natural")
             self.preserve_thickness_var.set(False)
             self.hatching_var.set(False)
+            self.paper_size_var.set("Custom")
             self.width_var.set("")
             self.height_var.set("")
+            self.width_entry.config(state=tk.NORMAL)
+            self.height_entry.config(state=tk.NORMAL)
         elif preset == "Pen Plotter (A4)":
             self.style_var.set("natural")
-            self.width_var.set("210")
-            self.height_var.set("297")
+            self.paper_size_var.set("A4 (210x297 mm)")
+            self._on_paper_size_changed()
             self.stroke_width_var.set("0.4")
             self.line_sorting_var.set(True)
         elif preset == "Laser Cutter":
             self.style_var.set("clean")
+            self.paper_size_var.set("Custom")
             self.width_var.set("300")
             self.height_var.set("200")
+            self.width_entry.config(state=tk.NORMAL)
+            self.height_entry.config(state=tk.NORMAL)
             self.stroke_width_var.set("0.1")
         elif preset == "Thick Lines":
             self.style_var.set("natural")

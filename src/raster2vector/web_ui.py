@@ -11,8 +11,52 @@ try:
 except ImportError:
     GRADIO_AVAILABLE = False
 
-from .config import ConversionConfig, SketchStyle, ThresholdMethod
+from .config import (
+    ConversionConfig,
+    SketchStyle,
+    ThresholdMethod,
+    PaperSize,
+    PAPER_DIMENSIONS,
+    get_paper_size,
+)
 from .core import RasterToVectorConverter
+
+
+# Paper size options for web UI dropdown
+PAPER_CHOICES = [
+    "Custom",
+    "A0 (841×1189 mm)",
+    "A1 (594×841 mm)",
+    "A2 (420×594 mm)",
+    "A3 (297×420 mm)",
+    "A4 (210×297 mm)",
+    "A5 (148×210 mm)",
+    "A6 (105×148 mm)",
+    "Letter (216×279 mm)",
+    "Legal (216×356 mm)",
+    "Tabloid (279×432 mm)",
+    "Postcard (100×148 mm)",
+    "Square 100mm",
+    "Square 150mm",
+    "Square 200mm",
+]
+
+PAPER_SIZE_MAP = {
+    "A0 (841×1189 mm)": PaperSize.A0,
+    "A1 (594×841 mm)": PaperSize.A1,
+    "A2 (420×594 mm)": PaperSize.A2,
+    "A3 (297×420 mm)": PaperSize.A3,
+    "A4 (210×297 mm)": PaperSize.A4,
+    "A5 (148×210 mm)": PaperSize.A5,
+    "A6 (105×148 mm)": PaperSize.A6,
+    "Letter (216×279 mm)": PaperSize.LETTER,
+    "Legal (216×356 mm)": PaperSize.LEGAL,
+    "Tabloid (279×432 mm)": PaperSize.TABLOID,
+    "Postcard (100×148 mm)": PaperSize.POSTCARD,
+    "Square 100mm": PaperSize.SQUARE_100,
+    "Square 150mm": PaperSize.SQUARE_150,
+    "Square 200mm": PaperSize.SQUARE_200,
+}
 
 
 def check_gradio():
@@ -27,6 +71,8 @@ def check_gradio():
 def convert_image(
     image: np.ndarray,
     style: str,
+    paper_size: str,
+    landscape: bool,
     width_mm: str,
     height_mm: str,
     stroke_width: float,
@@ -55,9 +101,16 @@ def convert_image(
         return None, "Please upload an image first."
 
     try:
-        # Parse dimensions
-        output_width = float(width_mm) if width_mm.strip() else None
-        output_height = float(height_mm) if height_mm.strip() else None
+        # Handle paper size
+        if paper_size != "Custom" and paper_size in PAPER_SIZE_MAP:
+            paper = PAPER_SIZE_MAP[paper_size]
+            output_width, output_height = get_paper_size(paper, landscape=landscape)
+        else:
+            # Parse custom dimensions
+            output_width = float(width_mm) if width_mm.strip() else None
+            output_height = float(height_mm) if height_mm.strip() else None
+            if landscape and output_width and output_height:
+                output_width, output_height = output_height, output_width
 
         # Parse seed
         seed_value = int(seed) if seed.strip() else None
@@ -175,6 +228,18 @@ def create_web_ui() -> "gr.Blocks":
                         value="Natural",
                         label="Style",
                     )
+
+                    paper_size = gr.Dropdown(
+                        choices=PAPER_CHOICES,
+                        value="Custom",
+                        label="Paper Size",
+                    )
+
+                    with gr.Row():
+                        landscape = gr.Checkbox(
+                            label="Landscape",
+                            value=False,
+                        )
 
                     with gr.Row():
                         width_mm = gr.Textbox(
@@ -301,23 +366,26 @@ def create_web_ui() -> "gr.Blocks":
 
         # Preset handlers
         def apply_preset(preset):
+            # Returns: style, paper_size, landscape, width_mm, height_mm, stroke_width,
+            #          preserve_thickness, stroke_spacing, min_thickness,
+            #          hatching, hatch_angle, hatch_spacing, cross_hatch
             if preset == "Default":
-                return "Natural", "", "", 0.5, False, 1.5, 4.0, False, 45, 2.0, False
+                return "Natural", "Custom", False, "", "", 0.5, False, 1.5, 4.0, False, 45, 2.0, False
             elif preset == "Pen Plotter":
-                return "Natural", "210", "297", 0.4, False, 1.5, 4.0, False, 45, 2.0, False
+                return "Natural", "A4 (210×297 mm)", False, "", "", 0.4, False, 1.5, 4.0, False, 45, 2.0, False
             elif preset == "Laser Cutter":
-                return "Clean", "300", "200", 0.1, False, 1.5, 4.0, False, 45, 2.0, False
+                return "Clean", "Custom", False, "300", "200", 0.1, False, 1.5, 4.0, False, 45, 2.0, False
             elif preset == "Thick Lines":
-                return "Natural", "", "", 0.5, True, 1.5, 4.0, False, 45, 2.0, False
+                return "Natural", "Custom", False, "", "", 0.5, True, 1.5, 4.0, False, 45, 2.0, False
             elif preset == "Hatching":
-                return "Natural", "", "", 0.5, True, 1.5, 4.0, True, 45, 2.0, False
-            return "Natural", "", "", 0.5, False, 1.5, 4.0, False, 45, 2.0, False
+                return "Natural", "Custom", False, "", "", 0.5, True, 1.5, 4.0, True, 45, 2.0, False
+            return "Natural", "Custom", False, "", "", 0.5, False, 1.5, 4.0, False, 45, 2.0, False
 
         preset_btns.change(
             fn=apply_preset,
             inputs=[preset_btns],
             outputs=[
-                style, width_mm, height_mm, stroke_width,
+                style, paper_size, landscape, width_mm, height_mm, stroke_width,
                 preserve_thickness, stroke_spacing, min_thickness,
                 hatching, hatch_angle, hatch_spacing, cross_hatch
             ],
@@ -329,6 +397,8 @@ def create_web_ui() -> "gr.Blocks":
             inputs=[
                 input_image,
                 style,
+                paper_size,
+                landscape,
                 width_mm,
                 height_mm,
                 stroke_width,

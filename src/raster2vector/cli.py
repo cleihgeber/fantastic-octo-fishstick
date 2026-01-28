@@ -4,8 +4,60 @@ import click
 from pathlib import Path
 import sys
 
-from .config import ConversionConfig, SketchStyle, ThresholdMethod
+from .config import (
+    ConversionConfig,
+    SketchStyle,
+    ThresholdMethod,
+    PaperSize,
+    paper_size_from_string,
+    get_paper_size,
+    list_paper_sizes,
+)
 from .core import RasterToVectorConverter
+
+
+# Valid paper size names for CLI help
+PAPER_SIZE_NAMES = ["a0", "a1", "a2", "a3", "a4", "a5", "a6", "letter", "legal", "tabloid", "postcard", "square100", "square150", "square200"]
+
+
+def _list_papers_callback(ctx, value):
+    """Callback to list paper sizes and exit."""
+    if not value:
+        return
+
+    click.echo("Available paper sizes (width x height in mm):\n")
+
+    papers = list_paper_sizes()
+
+    # Group by category
+    click.echo("ISO A Series:")
+    for name in ["a0", "a1", "a2", "a3", "a4", "a5", "a6"]:
+        if name in papers:
+            w, h = papers[name]
+            click.echo(f"  {name:12} {w:4.0f} x {h:4.0f} mm")
+
+    click.echo("\nISO B Series:")
+    for name in ["b0", "b1", "b2", "b3", "b4", "b5"]:
+        if name in papers:
+            w, h = papers[name]
+            click.echo(f"  {name:12} {w:4.0f} x {h:4.0f} mm")
+
+    click.echo("\nUS Sizes:")
+    for name in ["letter", "legal", "tabloid"]:
+        if name in papers:
+            w, h = papers[name]
+            click.echo(f"  {name:12} {w:4.0f} x {h:4.0f} mm")
+
+    click.echo("\nOther:")
+    for name in ["postcard", "square100", "square150", "square200"]:
+        if name in papers:
+            w, h = papers[name]
+            click.echo(f"  {name:12} {w:4.0f} x {h:4.0f} mm")
+
+    click.echo("\nUse --landscape (-l) to swap width and height.")
+    click.echo("Use --width and --height for custom dimensions.")
+
+    ctx.exit(0)
 
 
 @click.command()
@@ -31,6 +83,28 @@ from .core import RasterToVectorConverter
     type=float,
     default=None,
     help="Output height in mm (default: use source dimensions in px)",
+)
+@click.option(
+    "--paper",
+    type=str,
+    default=None,
+    help=f"Paper size preset: {', '.join(PAPER_SIZE_NAMES)}. Overrides --width/--height.",
+)
+@click.option(
+    "--landscape",
+    "-l",
+    is_flag=True,
+    default=False,
+    help="Use landscape orientation (swap width/height)",
+)
+@click.option(
+    "--list-papers",
+    is_flag=True,
+    default=False,
+    is_eager=True,
+    expose_value=False,
+    callback=lambda ctx, param, value: _list_papers_callback(ctx, value),
+    help="List all available paper sizes and exit",
 )
 @click.option(
     "--stroke-width",
@@ -172,6 +246,8 @@ def main(
     style: str,
     width: float,
     height: float,
+    paper: str,
+    landscape: bool,
     stroke_width: float,
     stroke_color: str,
     threshold: str,
@@ -206,23 +282,32 @@ def main(
         # Basic conversion with natural style
         raster2vector drawing.png output.svg
 
-        # Sketchy style for hand-drawn look
-        raster2vector -s sketchy drawing.png
+        # Use A4 paper size
+        raster2vector --paper a4 drawing.png output.svg
 
-        # Specify output size for pen plotter
-        raster2vector -w 200 -h 200 drawing.png output.svg
+        # A3 landscape orientation
+        raster2vector --paper a3 --landscape drawing.png output.svg
+
+        # US Letter size
+        raster2vector --paper letter drawing.png output.svg
+
+        # Custom size (200x300 mm)
+        raster2vector -w 200 -h 300 drawing.png output.svg
+
+        # List all available paper sizes
+        raster2vector --list-papers
+
+        # Sketchy style for hand-drawn look
+        raster2vector -s sketchy --paper a4 drawing.png
 
         # Preserve line thickness (thick lines become multiple strokes)
-        raster2vector --preserve-thickness drawing.png output.svg
+        raster2vector --preserve-thickness --paper a4 drawing.png
 
         # Fill solid areas with hatching
-        raster2vector --hatching --hatch-spacing 1.5 drawing.png
-
-        # Cross-hatching for denser fills
-        raster2vector --hatching --cross-hatch drawing.png
+        raster2vector --hatching --paper a5 drawing.png
 
         # Output G-code for CNC plotter
-        raster2vector --gcode -w 100 -h 100 drawing.png output.gcode
+        raster2vector --gcode --paper a4 drawing.png output.gcode
 
         # Clean output (no hand-drawn effects)
         raster2vector -s clean drawing.png
@@ -232,6 +317,24 @@ def main(
     if output_file is None:
         suffix = ".gcode" if gcode else ".svg"
         output_file = input_file.with_suffix(suffix)
+
+    # Handle paper size
+    output_width = width
+    output_height = height
+
+    if paper is not None:
+        try:
+            paper_size = paper_size_from_string(paper)
+            output_width, output_height = get_paper_size(paper_size, landscape=landscape)
+            if verbose:
+                orientation = "landscape" if landscape else "portrait"
+                click.echo(f"Using paper size: {paper} ({output_width}x{output_height} mm, {orientation})")
+        except ValueError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+    elif landscape and width is not None and height is not None:
+        # Swap dimensions for landscape with custom size
+        output_width, output_height = height, width
 
     # Build configuration
     style_map = {
@@ -249,8 +352,8 @@ def main(
 
     config = ConversionConfig(
         sketch_style=style_map[style],
-        output_width=width,
-        output_height=height,
+        output_width=output_width,
+        output_height=output_height,
         stroke_width=stroke_width,
         stroke_color=stroke_color,
         threshold_method=threshold_map[threshold],
@@ -281,16 +384,16 @@ def main(
 
     try:
         if gcode:
-            if width is None or height is None:
-                click.echo("Error: --width and --height are required for G-code output", err=True)
+            if output_width is None or output_height is None:
+                click.echo("Error: --width/--height or --paper is required for G-code output", err=True)
                 sys.exit(1)
 
             click.echo(f"Converting {input_file} to G-code...")
             converter.convert_to_gcode(
                 input_file,
                 output_file,
-                work_width=width,
-                work_height=height,
+                work_width=output_width,
+                work_height=output_height,
                 feed_rate=feed_rate,
                 seed=seed,
             )

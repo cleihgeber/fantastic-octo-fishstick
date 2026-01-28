@@ -240,17 +240,25 @@ def merge_nearby_endpoints(
     n = len(open_paths)
     parent = list(range(n))
 
-    def find(x):
-        if parent[x] != x:
-            parent[x] = find(parent[x])
-        return parent[x]
+   def find(i):
+        root = i
+        while parent[root] != root:
+            root = parent[root]
+        while parent[i] != root: # Path compression
+            next_node = parent[i]
+            parent[i] = root
+            i = next_node
+        return root
 
-    def union(x, y):
-        px, py = find(x), find(y)
-        if px != py:
-            parent[px] = py
+    def union(i, j):
+        root_i, root_j = find(i), find(j)
+        if root_i != root_j:
+            parent[root_i] = root_j
             return True
         return False
+
+    # ... (Keep your existing KDTree endpoint building logic here) ...
+    # (The KDTree logic is already efficient)
 
     # Build list of all endpoints with their path index and position (start=0, end=1)
     endpoints = []
@@ -296,76 +304,76 @@ def merge_nearby_endpoints(
                         union(path_i, path_j)
 
     # Group paths by their root in union-find
-    groups = {}
+   groups = {}
     for i in range(n):
         root = find(i)
-        if root not in groups:
-            groups[root] = []
-        groups[root].append(i)
+        groups.setdefault(root, []).append(i)
 
-    # Merge paths within each group
     merged_paths = []
+    sq_threshold = distance_threshold ** 2 # Work with squared distance to avoid sqrt
 
     for group_indices in groups.values():
         if len(group_indices) == 1:
             merged_paths.append(open_paths[group_indices[0]])
             continue
 
-        # Get all paths in this group
-        group_paths = [list(open_paths[i].points) for i in group_indices]
-
-        # Simple greedy merge: start with first path, extend by finding closest endpoints
-        result = group_paths[0]
-        remaining = group_paths[1:]
-
-        for _ in range(min(len(remaining) * 2, max_iterations)):
+        # Convert to deque for faster popping from both ends
+        remaining = deque([list(open_paths[i].points) for i in group_indices])
+        result = remaining.popleft()
+        
+        # We only try to merge paths that are actually within distance
+        for _ in range(max_iterations):
             if not remaining:
                 break
-
-            best_idx = None
-            best_dist = float('inf')
+            
+            best_idx = -1
+            best_dist = sq_threshold + 1.0 # Only care about points within threshold
             best_conn = None
 
-            r_start = result[0]
-            r_end = result[-1]
+            r_start, r_end = result[0], result[-1]
 
+            # Only check a subset of remaining if the list is huge to prevent hangs
+            search_limit = 500 
             for idx, path in enumerate(remaining):
-                p_start = path[0]
-                p_end = path[-1]
+                if idx > search_limit: break 
+                
+                p_start, p_end = path[0], path[-1]
+                
+                # Connection checks
+                conns = [
+                    ((r_end[0]-p_start[0])**2 + (r_end[1]-p_start[1])**2, ("end", False)),
+                    ((r_end[0]-p_end[0])**2 + (r_end[1]-p_end[1])**2, ("end", True)),
+                    ((r_start[0]-p_start[0])**2 + (r_start[1]-p_start[1])**2, ("start", True)),
+                    ((r_start[0]-p_end[0])**2 + (r_start[1]-p_end[1])**2, ("start", False))
+                ]
+                
+                for d, conn_type in conns:
+                    if d < best_dist:
+                        best_dist, best_idx, best_conn = d, idx, conn_type
+                        if d < 0.01: break # "Close enough" optimization
 
-                # Check all four connection types
-                d1 = (r_end[0] - p_start[0])**2 + (r_end[1] - p_start[1])**2
-                if d1 < best_dist:
-                    best_dist, best_idx, best_conn = d1, idx, ("end", False)
-
-                d2 = (r_end[0] - p_end[0])**2 + (r_end[1] - p_end[1])**2
-                if d2 < best_dist:
-                    best_dist, best_idx, best_conn = d2, idx, ("end", True)
-
-                d3 = (r_start[0] - p_start[0])**2 + (r_start[1] - p_start[1])**2
-                if d3 < best_dist:
-                    best_dist, best_idx, best_conn = d3, idx, ("start", True)
-
-                d4 = (r_start[0] - p_end[0])**2 + (r_start[1] - p_end[1])**2
-                if d4 < best_dist:
-                    best_dist, best_idx, best_conn = d4, idx, ("start", False)
-
-            if best_idx is not None:
-                path = remaining.pop(best_idx)
-                connect_at, reverse = best_conn
-
-                if reverse:
-                    path = list(reversed(path))
+            if best_idx != -1:
+                # We found a match, pop it by index from the deque
+                # Note: Deque doesn't support indexed popping efficiently, 
+                # but for smaller groups it's fine.
+                path = list(remaining)[best_idx]
+                del remaining[best_idx]
+                
+                connect_at, should_reverse = best_conn
+                if should_reverse: path.reverse()
 
                 if connect_at == "end":
                     result.extend(path[1:])
                 else:
                     result = path[:-1] + result
+            else:
+                # No more close matches in this pass
+                break
 
-        # Add any remaining paths that couldn't be merged
         merged_paths.append(Path(points=result))
-        for path in remaining:
-            merged_paths.append(Path(points=path))
+        # Add whatever is left over that couldn't be merged
+        for r in remaining:
+            merged_paths.append(Path(points=r))
 
     return closed_paths + merged_paths
 

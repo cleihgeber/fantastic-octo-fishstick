@@ -378,7 +378,7 @@ def _distance(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
 def sort_paths_for_plotting(paths: List[Path]) -> List[Path]:
     """Sort paths to minimize pen travel distance.
 
-    Uses a greedy nearest-neighbor approach with KDTree for speed.
+    Uses a greedy nearest-neighbor approach with periodic KDTree rebuilds.
 
     Args:
         paths: List of paths to sort
@@ -395,154 +395,128 @@ def sort_paths_for_plotting(paths: List[Path]) -> List[Path]:
     if n <= 50 or not KDTREE_AVAILABLE:
         return _sort_paths_simple(paths)
 
-    # Build arrays of start and end points
-    # Each path has two entries: index*2 for start, index*2+1 for end
-    endpoints = []
-    for p in paths:
-        endpoints.append(p.points[0])
-        endpoints.append(p.points[-1])
-
-    endpoints = np.array(endpoints)
-    tree = cKDTree(endpoints)
+    # For very large numbers, skip sorting entirely (too slow)
+    if n > 50000:
+        return paths
 
     sorted_paths = []
-    used = set()
+    remaining_indices = set(range(n))
     current_pos = np.array([0.0, 0.0])
 
-    # Find starting path closest to origin
-    _, nearest_idx = tree.query(current_pos, k=1)
-    path_idx = nearest_idx // 2
-    is_end = nearest_idx % 2 == 1
+    # Rebuild KDTree periodically as paths are consumed
+    rebuild_interval = max(100, n // 20)  # Rebuild every 5% of paths
 
-    if is_end and not paths[path_idx].is_closed:
-        sorted_paths.append(paths[path_idx].reverse())
-    else:
-        sorted_paths.append(paths[path_idx])
-    used.add(path_idx)
-    current_pos = np.array(sorted_paths[-1].points[-1])
+    def build_tree_for_remaining():
+        """Build KDTree for remaining (unused) paths only."""
+        if not remaining_indices:
+            return None, None, None
 
-    # Greedily add nearest paths
-    while len(used) < n:
-        # Query for k nearest neighbors (more than 1 in case some are already used)
-        k = min(20, 2 * (n - len(used)) + 2)
-        distances, indices = tree.query(current_pos, k=k)
+        # Map from tree index to original path index
+        idx_list = list(remaining_indices)
+        endpoints = []
+        endpoint_to_path = []  # (original_path_idx, is_end)
 
-        # Handle single result case
-        if np.isscalar(distances):
-            distances = [distances]
-            indices = [indices]
+        for orig_idx in idx_list:
+            p = paths[orig_idx]
+            endpoints.append(p.points[0])
+            endpoint_to_path.append((orig_idx, False))
+            endpoints.append(p.points[-1])
+            endpoint_to_path.append((orig_idx, True))
 
-        found = False
-        for idx in indices:
-            path_idx = idx // 2
-            if path_idx not in used:
-                is_end = idx % 2 == 1
+        if not endpoints:
+            return None, None, None
 
+        return cKDTree(np.array(endpoints)), endpoint_to_path, idx_list
+
+    tree, endpoint_map, idx_list = build_tree_for_remaining()
+    paths_since_rebuild = 0
+
+    while remaining_indices:
+        # Rebuild tree periodically to maintain efficiency
+        if paths_since_rebuild >= rebuild_interval and len(remaining_indices) > 50:
+            tree, endpoint_map, idx_list = build_tree_for_remaining()
+            paths_since_rebuild = 0
+
+        if tree is None or len(remaining_indices) <= 50:
+            # Fall back to simple approach for small remaining sets
+            remaining_paths = [paths[i] for i in remaining_indices]
+            if remaining_paths:
+                sorted_remaining = _sort_paths_simple_from_pos(remaining_paths, current_pos)
+                sorted_paths.extend(sorted_remaining)
+            break
+
+        # Query nearest neighbor
+        _, nearest_idx = tree.query(current_pos, k=1)
+
+        if nearest_idx < len(endpoint_map):
+            path_idx, is_end = endpoint_map[nearest_idx]
+
+            if path_idx in remaining_indices:
                 if is_end and not paths[path_idx].is_closed:
                     sorted_paths.append(paths[path_idx].reverse())
                 else:
                     sorted_paths.append(paths[path_idx])
 
-                used.add(path_idx)
                 current_pos = np.array(sorted_paths[-1].points[-1])
-                found = True
-                break
-
-        # If we didn't find an unused path in the k-nearest, fall back to scanning
-        if not found:
-            best_idx = None
-            best_dist = float('inf')
-            best_reversed = False
-
-            for i in range(n):
-                if i in used:
-                    continue
-
-                d_start = (current_pos[0] - paths[i].points[0][0])**2 + (current_pos[1] - paths[i].points[0][1])**2
-                d_end = (current_pos[0] - paths[i].points[-1][0])**2 + (current_pos[1] - paths[i].points[-1][1])**2
-
-                if d_start < best_dist:
-                    best_dist = d_start
-                    best_idx = i
-                    best_reversed = False
-                if d_end < best_dist and not paths[i].is_closed:
-                    best_dist = d_end
-                    best_idx = i
-                    best_reversed = True
-
-            if best_idx is not None:
-                if best_reversed:
-                    sorted_paths.append(paths[best_idx].reverse())
-                else:
-                    sorted_paths.append(paths[best_idx])
-                used.add(best_idx)
-                current_pos = np.array(sorted_paths[-1].points[-1])
+                remaining_indices.remove(path_idx)
+                paths_since_rebuild += 1
+            else:
+                # Path already used (stale tree), force rebuild
+                tree, endpoint_map, idx_list = build_tree_for_remaining()
+                paths_since_rebuild = 0
+        else:
+            # Index out of bounds, force rebuild
+            tree, endpoint_map, idx_list = build_tree_for_remaining()
+            paths_since_rebuild = 0
 
     return sorted_paths
 
 
-def _sort_paths_simple(paths: List[Path]) -> List[Path]:
-    """Simple O(n²) path sorting for small path counts."""
+def _sort_paths_simple_from_pos(paths: List[Path], start_pos: Tuple[float, float]) -> List[Path]:
+    """Simple O(n²) path sorting starting from a given position."""
     if len(paths) <= 1:
         return paths
 
     sorted_paths = []
     remaining = list(range(len(paths)))
+    current_pos = start_pos
 
-    # Start with the path closest to origin
-    current_pos = (0.0, 0.0)
-    best_idx = 0
-    best_dist = float("inf")
-    best_reversed = False
-
-    for i in remaining:
-        d_start = _distance(current_pos, paths[i].points[0])
-        d_end = _distance(current_pos, paths[i].points[-1])
-
-        if d_start < best_dist:
-            best_dist = d_start
-            best_idx = i
-            best_reversed = False
-        if d_end < best_dist:
-            best_dist = d_end
-            best_idx = i
-            best_reversed = True
-
-    if best_reversed and not paths[best_idx].is_closed:
-        sorted_paths.append(paths[best_idx].reverse())
-    else:
-        sorted_paths.append(paths[best_idx])
-    remaining.remove(best_idx)
-    current_pos = sorted_paths[-1].points[-1]
-
-    # Greedily add nearest paths
     while remaining:
         best_idx = remaining[0]
         best_dist = float("inf")
         best_reversed = False
+        best_remaining_idx = 0
 
-        for i in remaining:
-            d_start = _distance(current_pos, paths[i].points[0])
-            d_end = _distance(current_pos, paths[i].points[-1])
+        for ri, i in enumerate(remaining):
+            p = paths[i]
+            d_start = (current_pos[0] - p.points[0][0])**2 + (current_pos[1] - p.points[0][1])**2
+            d_end = (current_pos[0] - p.points[-1][0])**2 + (current_pos[1] - p.points[-1][1])**2
 
             if d_start < best_dist:
                 best_dist = d_start
                 best_idx = i
                 best_reversed = False
-            if d_end < best_dist and not paths[i].is_closed:
+                best_remaining_idx = ri
+            if d_end < best_dist and not p.is_closed:
                 best_dist = d_end
                 best_idx = i
                 best_reversed = True
+                best_remaining_idx = ri
 
         if best_reversed:
             sorted_paths.append(paths[best_idx].reverse())
         else:
             sorted_paths.append(paths[best_idx])
 
-        remaining.remove(best_idx)
         current_pos = sorted_paths[-1].points[-1]
+        remaining.pop(best_remaining_idx)
 
     return sorted_paths
+
+
+def _sort_paths_simple(paths: List[Path]) -> List[Path]:
+    """Simple O(n²) path sorting for small path counts, starting from origin."""
+    return _sort_paths_simple_from_pos(paths, (0.0, 0.0))
 
 
 def filter_paths(paths: List[Path], min_length: int = 5, min_pixel_length: float = 10.0) -> List[Path]:

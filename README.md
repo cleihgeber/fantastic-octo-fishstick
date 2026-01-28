@@ -7,6 +7,8 @@ Raster2Vector takes line drawings in raster format (PNG, JPG, etc.) and converts
 ## Features
 
 - **Centerline extraction**: Produces single-line paths, not outlines
+- **Thickness preservation**: Thick strokes become multiple parallel lines to maintain visual mass
+- **Fill hatching**: Solid filled areas are converted to hatching patterns
 - **Sketchy effects**: Optional hand-drawn look with natural wobble and variation
 - **Bezier curve fitting**: Smooth curves that plot beautifully
 - **Path optimization**: Sorts paths to minimize pen travel distance
@@ -39,6 +41,15 @@ raster2vector --style sketchy drawing.png output.svg
 # Specify output size for pen plotter (in mm)
 raster2vector --width 200 --height 200 drawing.png output.svg
 
+# Preserve line thickness (thick lines become multiple parallel strokes)
+raster2vector --preserve-thickness drawing.png output.svg
+
+# Fill solid areas with hatching
+raster2vector --hatching --hatch-spacing 1.5 drawing.png output.svg
+
+# Cross-hatching for denser fills
+raster2vector --hatching --cross-hatch drawing.png output.svg
+
 # Clean output (no hand-drawn effects)
 raster2vector --style clean drawing.png output.svg
 
@@ -63,6 +74,23 @@ config = ConversionConfig(
 )
 result = convert("drawing.png", "output.svg", config=config)
 
+# Preserve thickness - thick lines become multiple strokes
+config = ConversionConfig.with_thickness_preservation(
+    width_mm=200,
+    height_mm=200,
+    stroke_spacing=1.5,  # spacing between parallel strokes
+)
+result = convert("drawing.png", "output.svg", config=config)
+
+# Fill areas with hatching
+config = ConversionConfig.with_fill_hatching(
+    width_mm=200,
+    height_mm=200,
+    hatch_spacing=2.0,
+    cross_hatch=True,  # add perpendicular lines
+)
+result = convert("drawing.png", "output.svg", config=config)
+
 # Access conversion statistics
 print(f"Generated {result.stats['paths_output']} paths")
 print(f"Total path length: {result.stats['total_path_length']:.1f} units")
@@ -82,10 +110,12 @@ print(f"Total path length: {result.stats['total_path_length']:.1f} units")
 1. **Preprocessing**: Load image, convert to grayscale, apply thresholding
 2. **Skeletonization**: Extract single-pixel-wide centerlines using morphological thinning
 3. **Path Tracing**: Convert skeleton pixels to ordered polyline paths
-4. **Curve Fitting**: Fit smooth Bezier curves to the paths
-5. **Sketch Effects**: Add optional wobble and variation for hand-drawn look
-6. **Optimization**: Sort paths to minimize pen travel distance
-7. **Output**: Generate SVG or G-code
+4. **Thickness Expansion**: Analyze original stroke widths and generate parallel strokes (optional)
+5. **Fill Hatching**: Detect solid areas and generate hatching patterns (optional)
+6. **Curve Fitting**: Fit smooth Bezier curves to the paths
+7. **Sketch Effects**: Add optional wobble and variation for hand-drawn look
+8. **Optimization**: Sort paths to minimize pen travel distance
+9. **Output**: Generate SVG or G-code
 
 ## CLI Options
 
@@ -110,6 +140,13 @@ Options:
   --no-sort                       Don't sort paths to minimize pen travel
   --wobble FLOAT                  Override wobble amplitude (0-5)
   --seed INTEGER                  Random seed for reproducible output
+  -p, --preserve-thickness        Generate multiple strokes for thick lines
+  --stroke-spacing FLOAT          Spacing between parallel strokes (default: 1.5)
+  --min-thickness FLOAT           Min width for multiple strokes (default: 4.0)
+  --hatching                      Generate hatching for solid filled areas
+  --hatch-angle FLOAT             Angle of hatch lines in degrees (default: 45)
+  --hatch-spacing FLOAT           Spacing between hatch lines (default: 2.0)
+  --cross-hatch                   Add perpendicular hatch lines
   --gcode                         Output G-code instead of SVG
   --feed-rate FLOAT               G-code feed rate in mm/min (default: 1000)
   -v, --verbose                   Print conversion statistics
@@ -141,6 +178,13 @@ Options:
 | `stroke_color` | str | "black" | SVG stroke color |
 | `line_sorting` | bool | True | Optimize path order |
 | `merge_nearby_endpoints` | bool | True | Connect nearby paths |
+| `preserve_thickness` | bool | False | Multi-stroke for thick lines |
+| `stroke_spacing` | float | 1.5 | Spacing between parallel strokes |
+| `min_width_for_multi` | float | 4.0 | Min width for multiple strokes |
+| `fill_hatching` | bool | False | Hatch solid filled areas |
+| `hatch_angle` | float | 45.0 | Angle of hatch lines |
+| `hatch_spacing` | float | 2.0 | Spacing between hatch lines |
+| `cross_hatch` | bool | False | Add perpendicular hatch lines |
 
 ## Tips for Best Results
 

@@ -47,6 +47,17 @@ class ConversionConfig:
 
         line_sorting: Sort paths to minimize pen travel
         group_by_color: Group strokes by detected color regions
+
+        preserve_thickness: Generate multiple parallel strokes for thick lines
+        stroke_spacing: Spacing between parallel strokes when preserving thickness
+        min_width_for_multi: Minimum stroke width to trigger multiple strokes
+        max_parallel_strokes: Maximum number of parallel strokes
+
+        fill_hatching: Generate hatching lines for solid filled areas
+        hatch_angle: Angle of hatch lines in degrees
+        hatch_spacing: Spacing between hatch lines
+        min_hatch_area: Minimum area to apply hatching
+        cross_hatch: Add perpendicular hatch lines for denser fill
     """
 
     # Preprocessing
@@ -82,6 +93,19 @@ class ConversionConfig:
     line_sorting: bool = True
     merge_nearby_endpoints: bool = True
     merge_distance: float = 3.0
+
+    # Thickness preservation (for rendering mass with multiple strokes)
+    preserve_thickness: bool = False
+    stroke_spacing: float = 1.5  # Spacing between parallel strokes
+    min_width_for_multi: float = 4.0  # Minimum width to generate multiple strokes
+    max_parallel_strokes: int = 10  # Maximum parallel strokes for very thick lines
+
+    # Hatching for filled areas
+    fill_hatching: bool = False  # Generate hatching for solid filled regions
+    hatch_angle: float = 45.0  # Angle of hatch lines in degrees
+    hatch_spacing: float = 2.0  # Spacing between hatch lines
+    min_hatch_area: int = 200  # Minimum area (in pixels) to apply hatching
+    cross_hatch: bool = False  # Add second set of hatch lines at perpendicular angle
 
     def __post_init__(self):
         """Apply sketch style presets."""
@@ -151,4 +175,63 @@ class ConversionConfig:
             line_sorting=True,
             simplify_tolerance=0.5,
             curve_fitting=True,
+        )
+
+    @classmethod
+    def with_thickness_preservation(
+        cls,
+        width_mm: float = 210,
+        height_mm: float = 297,
+        stroke_spacing: float = 1.5,
+    ) -> "ConversionConfig":
+        """Create config that preserves stroke thickness with multiple parallel lines.
+
+        Use this when you want thicker strokes in the original to be rendered
+        as multiple pen strokes to maintain visual weight/mass.
+
+        Args:
+            width_mm: Output width in mm
+            height_mm: Output height in mm
+            stroke_spacing: Spacing between parallel strokes (smaller = denser)
+        """
+        return cls(
+            output_width=width_mm,
+            output_height=height_mm,
+            stroke_width=0.4,
+            line_sorting=True,
+            sketch_style=SketchStyle.NATURAL,
+            preserve_thickness=True,
+            stroke_spacing=stroke_spacing,
+            min_width_for_multi=4.0,
+        )
+
+    @classmethod
+    def with_fill_hatching(
+        cls,
+        width_mm: float = 210,
+        height_mm: float = 297,
+        hatch_spacing: float = 2.0,
+        cross_hatch: bool = False,
+    ) -> "ConversionConfig":
+        """Create config that fills solid areas with hatching lines.
+
+        Use this when your drawing has filled/solid areas that should be
+        rendered as hatching patterns for the pen plotter.
+
+        Args:
+            width_mm: Output width in mm
+            height_mm: Output height in mm
+            hatch_spacing: Spacing between hatch lines
+            cross_hatch: Whether to add perpendicular hatch lines
+        """
+        return cls(
+            output_width=width_mm,
+            output_height=height_mm,
+            stroke_width=0.4,
+            line_sorting=True,
+            sketch_style=SketchStyle.NATURAL,
+            preserve_thickness=True,
+            fill_hatching=True,
+            hatch_spacing=hatch_spacing,
+            cross_hatch=cross_hatch,
         )

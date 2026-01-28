@@ -11,6 +11,7 @@ from .skeleton import extract_skeleton, clean_skeleton, analyze_skeleton
 from .tracing import trace_paths, merge_nearby_endpoints, sort_paths_for_plotting, filter_paths, Path as TracedPath
 from .curves import process_all_paths, ProcessedPath
 from .svg_output import create_svg, save_svg, SVGDocument, paths_to_gcode
+from .stroke_width import expand_paths_for_thickness
 
 
 @dataclass
@@ -94,14 +95,43 @@ class RasterToVectorConverter:
         # Step 6: Filter short paths
         paths = filter_paths(paths, min_length=self.config.min_path_length)
 
-        # Step 7: Sort paths for efficient plotting
+        # Step 7: Expand paths for thickness preservation (if enabled)
+        thickness_expanded = False
+        if self.config.preserve_thickness or self.config.fill_hatching:
+            paths = expand_paths_for_thickness(
+                paths,
+                binary,
+                stroke_spacing=self.config.stroke_spacing,
+                min_width_for_multi=self.config.min_width_for_multi,
+                include_hatching=self.config.fill_hatching,
+                hatch_angle=self.config.hatch_angle,
+                hatch_spacing=self.config.hatch_spacing,
+                min_hatch_area=self.config.min_hatch_area,
+            )
+            thickness_expanded = True
+
+            # Add cross-hatching if enabled
+            if self.config.cross_hatch and self.config.fill_hatching:
+                cross_paths = expand_paths_for_thickness(
+                    [],  # No base paths, just hatching
+                    binary,
+                    stroke_spacing=self.config.stroke_spacing,
+                    min_width_for_multi=self.config.min_width_for_multi,
+                    include_hatching=True,
+                    hatch_angle=self.config.hatch_angle + 90,  # Perpendicular
+                    hatch_spacing=self.config.hatch_spacing,
+                    min_hatch_area=self.config.min_hatch_area,
+                )
+                paths.extend(cross_paths)
+
+        # Step 8: Sort paths for efficient plotting
         if self.config.line_sorting:
             paths = sort_paths_for_plotting(paths)
 
-        # Step 8: Process paths (simplify, smooth, add effects, fit curves)
+        # Step 9: Process paths (simplify, smooth, add effects, fit curves)
         processed_paths = process_all_paths(paths, self.config, seed)
 
-        # Step 9: Determine output dimensions
+        # Step 10: Determine output dimensions
         if self.config.output_width and self.config.output_height:
             out_width = self.config.output_width
             out_height = self.config.output_height
@@ -110,7 +140,7 @@ class RasterToVectorConverter:
             out_width = source_width
             out_height = source_height
 
-        # Step 10: Create SVG
+        # Step 11: Create SVG
         svg_doc = create_svg(
             processed_paths,
             width=out_width,
@@ -121,7 +151,7 @@ class RasterToVectorConverter:
             source_height=source_height,
         )
 
-        # Step 11: Save if output path provided
+        # Step 12: Save if output path provided
         if output_path:
             save_svg(svg_doc, output_path)
 
@@ -135,6 +165,8 @@ class RasterToVectorConverter:
             "paths_traced": len(paths),
             "paths_output": len(processed_paths),
             "total_path_length": svg_doc.total_path_length,
+            "thickness_preserved": thickness_expanded,
+            "fill_hatching": self.config.fill_hatching,
         }
 
         return ConversionResult(svg=svg_doc, paths=processed_paths, stats=stats)

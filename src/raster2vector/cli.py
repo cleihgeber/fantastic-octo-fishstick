@@ -122,6 +122,49 @@ from .core import RasterToVectorConverter
     default=False,
     help="Print conversion statistics",
 )
+@click.option(
+    "--preserve-thickness",
+    "-p",
+    is_flag=True,
+    default=False,
+    help="Generate multiple strokes for thick lines to preserve visual mass",
+)
+@click.option(
+    "--stroke-spacing",
+    type=float,
+    default=1.5,
+    help="Spacing between parallel strokes when preserving thickness (default: 1.5)",
+)
+@click.option(
+    "--min-thickness",
+    type=float,
+    default=4.0,
+    help="Minimum line width to generate multiple strokes (default: 4.0)",
+)
+@click.option(
+    "--hatching",
+    is_flag=True,
+    default=False,
+    help="Generate hatching lines for solid filled areas",
+)
+@click.option(
+    "--hatch-angle",
+    type=float,
+    default=45.0,
+    help="Angle of hatch lines in degrees (default: 45)",
+)
+@click.option(
+    "--hatch-spacing",
+    type=float,
+    default=2.0,
+    help="Spacing between hatch lines (default: 2.0)",
+)
+@click.option(
+    "--cross-hatch",
+    is_flag=True,
+    default=False,
+    help="Add perpendicular hatch lines for denser fill",
+)
 @click.version_option(package_name="raster2vector")
 def main(
     input_file: Path,
@@ -144,6 +187,13 @@ def main(
     gcode: bool,
     feed_rate: float,
     verbose: bool,
+    preserve_thickness: bool,
+    stroke_spacing: float,
+    min_thickness: float,
+    hatching: bool,
+    hatch_angle: float,
+    hatch_spacing: float,
+    cross_hatch: bool,
 ):
     """Convert raster line drawings to vectors for pen plotters.
 
@@ -161,6 +211,15 @@ def main(
 
         # Specify output size for pen plotter
         raster2vector -w 200 -h 200 drawing.png output.svg
+
+        # Preserve line thickness (thick lines become multiple strokes)
+        raster2vector --preserve-thickness drawing.png output.svg
+
+        # Fill solid areas with hatching
+        raster2vector --hatching --hatch-spacing 1.5 drawing.png
+
+        # Cross-hatching for denser fills
+        raster2vector --hatching --cross-hatch drawing.png
 
         # Output G-code for CNC plotter
         raster2vector --gcode -w 100 -h 100 drawing.png output.gcode
@@ -202,6 +261,15 @@ def main(
         simplify_tolerance=simplify,
         curve_fitting=not no_curves,
         line_sorting=not no_sort,
+        # Thickness preservation options
+        preserve_thickness=preserve_thickness,
+        stroke_spacing=stroke_spacing,
+        min_width_for_multi=min_thickness,
+        # Hatching options
+        fill_hatching=hatching,
+        hatch_angle=hatch_angle,
+        hatch_spacing=hatch_spacing,
+        cross_hatch=cross_hatch,
     )
 
     # Override wobble if specified
@@ -241,6 +309,10 @@ def main(
                 click.echo(f"  Junctions: {result.stats['junctions']}")
                 click.echo(f"  Paths output: {result.stats['paths_output']}")
                 click.echo(f"  Total path length: {result.stats['total_path_length']:.1f} units")
+                if result.stats.get('thickness_preserved'):
+                    click.echo(f"  Thickness preservation: enabled")
+                if result.stats.get('fill_hatching'):
+                    click.echo(f"  Fill hatching: enabled")
 
     except FileNotFoundError as e:
         click.echo(f"Error: {e}", err=True)

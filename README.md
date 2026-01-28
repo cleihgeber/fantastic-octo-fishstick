@@ -13,6 +13,7 @@ Raster2Vector takes line drawings in raster format (PNG, JPG, etc.) and converts
 - **Bezier curve fitting**: Smooth curves that plot beautifully
 - **Path optimization**: Sorts paths to minimize pen travel distance
 - **Multiple output formats**: SVG for plotters, G-code for CNC machines
+- **GUI interfaces**: Desktop (Tkinter) and web-based (Gradio) interfaces
 - **Configurable**: Fine-tune every aspect of the conversion
 
 ## Installation
@@ -21,13 +22,65 @@ Raster2Vector takes line drawings in raster format (PNG, JPG, etc.) and converts
 pip install -e .
 ```
 
-Or for development:
+With GUI support (for SVG preview in desktop app):
+
+```bash
+pip install -e ".[gui]"
+```
+
+With web UI support (Gradio):
+
+```bash
+pip install -e ".[web]"
+```
+
+Or install everything:
+
+```bash
+pip install -e ".[all]"
+```
+
+For development:
 
 ```bash
 pip install -e ".[dev]"
 ```
 
 ## Quick Start
+
+### Desktop GUI
+
+Launch the desktop application:
+
+```bash
+raster2vector-gui
+# or
+r2v-gui
+```
+
+Features:
+- Side-by-side input/output preview
+- All settings organized in tabs
+- Real-time SVG preview (requires cairosvg)
+- Preset configurations for common use cases
+
+### Web Interface
+
+Launch the web-based interface (requires Gradio):
+
+```bash
+raster2vector-web
+# or
+r2v-web
+```
+
+Then open http://127.0.0.1:7860 in your browser.
+
+Features:
+- Modern web interface
+- Drag-and-drop image upload
+- Works on any device with a browser
+- Shareable via public link (`--share` flag)
 
 ### Command Line
 

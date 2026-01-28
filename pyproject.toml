@@ -42,10 +42,26 @@ dev = [
     "black>=23.0.0",
     "ruff>=0.1.0",
 ]
+gui = [
+    "cairosvg>=2.5.0",  # For SVG preview rendering
+]
+web = [
+    "gradio>=4.0.0",
+]
+all = [
+    "cairosvg>=2.5.0",
+    "gradio>=4.0.0",
+]
 
 [project.scripts]
 raster2vector = "raster2vector.cli:main"
 r2v = "raster2vector.cli:main"
+
+[project.gui-scripts]
+raster2vector-gui = "raster2vector.gui:main"
+r2v-gui = "raster2vector.gui:main"
+raster2vector-web = "raster2vector.web_ui:main"
+r2v-web = "raster2vector.web_ui:main"
 
 [project.urls]
 Homepage = "https://github.com/cleihgeber/fantastic-octo-fishstick"

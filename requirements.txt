@@ -1,0 +1,20 @@
+# Core runtime dependencies
+numpy
+opencv-python
+scikit-image
+scipy
+svgwrite
+Pillow
+click
+
+# Optional (GUI / web UI / preview)
+gradio      # required for the web UI (src/raster2vector/web_ui.py)
+cairosvg    # required for SVG preview in the desktop GUI
+
+# Development / testing
+pytest
+
+# Notes:
+# - The repository also uses stdlib modules (tkinter, tempfile, threading, pathlib, etc.)
+# - Some features (e.g. KD-tree) can work without SciPy if cKDTree is absent; SciPy is used in multiple places.
+# - If you prefer version pins, I can add minimum versions or exact pins.

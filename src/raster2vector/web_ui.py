@@ -396,6 +396,17 @@ def convert_image(
         yield None, f"Error: {str(e)}"
 
 
+def get_logo_path() -> Optional[str]:
+    """Get the path to the logo file if it exists."""
+    import os
+    # Check for logo in assets folder
+    module_dir = os.path.dirname(os.path.abspath(__file__))
+    logo_path = os.path.join(module_dir, "assets", "logo.png")
+    if os.path.exists(logo_path):
+        return logo_path
+    return None
+
+
 def create_web_ui() -> "gr.Blocks":
     """Create the Gradio web interface.
 
@@ -408,15 +419,29 @@ def create_web_ui() -> "gr.Blocks":
         title="Raster2Vector - Pen Plotter Converter",
         theme=gr.themes.Soft(),
     ) as app:
-        gr.Markdown(
-            """
-            # Raster2Vector
-            ### Convert line drawings to vectors for pen plotters
+        # Header with logo
+        with gr.Row():
+            with gr.Column(scale=1):
+                logo_path = get_logo_path()
+                if logo_path:
+                    gr.Image(
+                        value=logo_path,
+                        show_label=False,
+                        show_download_button=False,
+                        show_share_button=False,
+                        container=False,
+                        height=150,
+                    )
+            with gr.Column(scale=3):
+                gr.Markdown(
+                    """
+                    # Raster2Vector
+                    ### Convert line drawings to vectors for pen plotters
 
-            Upload a raster image (PNG, JPG) and convert it to single-line SVG paths
-            suitable for pen plotters, laser cutters, and CNC machines.
-            """
-        )
+                    Upload a raster image (PNG, JPG) and convert it to single-line SVG paths
+                    suitable for pen plotters, laser cutters, and CNC machines.
+                    """
+                )
 
         with gr.Row():
             # Left column - Input and settings

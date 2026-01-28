@@ -519,14 +519,14 @@ def create_web_ui() -> "gr.Blocks":
 
 def launch_web_ui(
     share: bool = False,
-    server_name: str = "127.0.0.1",
+    server_name: str = "0.0.0.0",
     server_port: int = 7860,
 ):
     """Launch the web UI.
 
     Args:
         share: Create a public link
-        server_name: Server hostname
+        server_name: Server hostname (0.0.0.0 for network access)
         server_port: Server port
     """
     check_gradio()
